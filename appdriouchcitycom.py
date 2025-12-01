@@ -3,7 +3,7 @@ from newspaper import Article
 import requests
 import base64
 import google.generativeai as genai
-from PIL import Image, ImageEnhance, ImageOps
+from PIL import Image, ImageEnhance
 import io
 import numpy as np
 
@@ -23,88 +23,68 @@ with st.sidebar:
     api_key = st.text_input("مفتاح Gemini API", type="password")
     st.caption("احصل عليه من: aistudio.google.com")
 
-# --- دوال معالجة الصور (الفلاتر) ---
-def create_vignette(image, corner_darkness=180):
-    # تحويل الصورة لنمط RGB لضمان التوافق
+# --- دوال معالجة الصور ---
+def create_vignette(image):
     if image.mode != 'RGB':
         image = image.convert('RGB')
-        
     width, height = image.size
-    
-    # إنشاء قناع التدرج الدائري
     x = np.linspace(-1, 1, width)
     y = np.linspace(-1, 1, height)
     X, Y = np.meshgrid(x, y)
     radius = np.sqrt(X**2 + Y**2)
-    
-    # تطبيع القيمة (Normalize)
     radius = radius / np.max(radius)
     alpha = 1 - radius
-    alpha = np.power(alpha, 1.5) # التحكم في نعومة التدرج
-    
-    # تطبيق القناع
+    alpha = np.power(alpha, 1.5)
     vignette_mask = Image.fromarray((alpha * 255).astype('uint8'), mode='L')
     black_layer = Image.new('RGB', (width, height), 'black')
     return Image.composite(image, black_layer, vignette_mask)
 
 def process_image_for_news(image_url):
     try:
-        # 1. تحميل الصورة
         response = requests.get(image_url, stream=True)
         img = Image.open(response.raw)
         
-        # التأكد من أن الصورة RGB (لحل مشاكل صور PNG)
         if img.mode in ('RGBA', 'P'):
             img = img.convert('RGB')
         
-        # 2. تحسين الألوان (Saturation)
         converter = ImageEnhance.Color(img)
-        img = converter.enhance(1.4) # زيادة التشبع 40% لجعل الألوان زاهية
+        img = converter.enhance(1.4) 
         
-        # 3. تحسين التباين (Contrast)
         converter = ImageEnhance.Contrast(img)
         img = converter.enhance(1.2) 
         
-        # 4. تحسين الحدة (Sharpness)
         converter = ImageEnhance.Sharpness(img)
         img = converter.enhance(1.3)
         
-        # 5. إضافة الفينييت (تأثير انستغرام السينمائي)
         img = create_vignette(img)
         
-        # تحويل النتيجة لملف بايتس
         buf = io.BytesIO()
         img.save(buf, format='JPEG', quality=95)
         return buf.getvalue()
     except Exception as e:
-        st.error(f"خطأ في معالجة الصورة: {e}")
+        st.error(f"Error processing image: {e}")
         return None
 
-# --- دوال الذكاء الاصطناعي (إعادة الصياغة) ---
+# --- دوال الذكاء الاصطناعي ---
 def rewrite_article_ai(original_text, api_key):
     try:
         genai.configure(api_key=api_key)
-        # استخدام الموديل المستقر Gemini Pro
         model = genai.GenerativeModel('gemini-pro')
         
         prompt = f"""
-        أنت صحفي محترف (Senior Editor) في موقع إخباري مغربي.
-        المطلوب: إعادة صياغة الخبر التالي بأسلوب مهني جداً.
-        
+        أنت صحفي محترف. أعد صياغة الخبر التالي بأسلوب مهني.
         القواعد:
-        1. **العنوان:** اكتب عنواناً واحداً فقط في السطر الأول. يجب أن يكون قوياً، جذاباً للنقر (Clickbait مهني)، ويراعي SEO.
-        2. **المتن:** اكتب بأسلوب سردي قصصي (Storytelling) إن أمكن، وابتعد عن التكرار والحشو.
-        3. **اللغة:** عربية فصحى سليمة، قوية ومؤثرة.
-        4. **الهيكل:** فقرات قصيرة ومترابطة.
+        1. عنوان واحد جذاب في السطر الأول.
+        2. متن بأسلوب سردي وقصصي.
+        3. لغة عربية قوية وخالية من الحشو.
         
         النص الأصلي:
         {original_text[:6000]}
         """
-        
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        return f"خطأ في الاتصال بـ AI: {e}"
+        return f"AI Error: {e}"
 
 # --- دوال ووردبريس ---
 def upload_image_bytes(image_data, wp_url, wp_user, wp_password):
@@ -120,21 +100,18 @@ def upload_image_bytes(image_data, wp_url, wp_user, wp_password):
         if response.status_code == 201:
             return response.json()['id']
         else:
-            st.error(f"فشل رفع الصورة: {response.status_code} - {response.text}")
             return None
-    except Exception as e:
-        st.error(f"خطأ اتصال WP: {e}")
+    except:
         return None
 
 def create_wp_post(title, content, image_id, wp_url, wp_user, wp_password):
     credentials = f"{wp_user}:{wp_password}"
     token = base64.b64encode(credentials.encode()).decode('utf-8')
     headers = {'Authorization': f'Basic {token}', 'Content-Type': 'application/json'}
-    
     post = {
         'title': title,
         'content': content,
-        'status': 'draft', # مسودة
+        'status': 'draft',
         'featured_media': image_id
     }
     return requests.post(f"{wp_url}/wp-json/wp/v2/posts", headers=headers, json=post)
@@ -142,21 +119,57 @@ def create_wp_post(title, content, image_id, wp_url, wp_user, wp_password):
 # --- الواجهة الرئيسية ---
 url_input = st.text_input("🔗 ضع رابط الخبر الأصلي هنا:")
 
-if st.button("✨ تشغيل المعالج السحري"):
+if st.button("✨ تشغيل المعالج"):
     if not api_key or not wp_password:
-        st.warning("⚠️ تأكد من تعبئة مفتاح API وكلمة السر في القائمة الجانبية.")
+        st.warning("⚠️ أدخل البيانات في القائمة الجانبية")
     else:
-        status_box = st.status("جاري العمل... ⏳", expanded=True)
+        status_box = st.status("جاري العمل...", expanded=True)
         
         try:
             # 1. جلب الخبر
-            status_box.write("📥 1. جاري سحب الخبر من المصدر...")
+            status_box.write("📥 1. جلب الخبر...")
             article = Article(url_input)
             article.download()
             article.parse()
             
-            # عرض البيانات الأولية
-            # st.info(f"تم جلب: {article.title}") 
-
             # 2. معالجة الصورة
-            status_box.write("🎨 2. جاري تحسين الصورة (ألوان، تباين، تأثير
+            status_box.write("🎨 2. معالجة الصورة...")
+            processed_image = None
+            if article.top_image:
+                processed_image = process_image_for_news(article.top_image)
+                if processed_image:
+                    st.image(processed_image, caption="الصورة المحسنة", width=400)
+
+            # 3. الذكاء الاصطناعي
+            status_box.write("🤖 3. إعادة الصياغة...")
+            ai_result = rewrite_article_ai(article.text, api_key)
+            
+            if "Error" in ai_result:
+                status_box.update(label="خطأ في AI", state="error")
+                st.error(ai_result)
+            else:
+                lines = ai_result.split('\n')
+                final_title = next((line for line in lines if line.strip()), "عنوان")
+                final_title = final_title.replace('*', '').replace('#', '').strip()
+                final_content = "\n".join([line for line in lines if line.strip() != final_title])
+                
+                st.subheader("معاينة:")
+                st.text_area("العنوان", final_title, height=70)
+                st.markdown(final_content)
+
+                # 4. النشر
+                status_box.write("🚀 4. النشر...")
+                media_id = 0
+                if processed_image:
+                    media_id = upload_image_bytes(processed_image, wp_url, wp_user, wp_password)
+                
+                res = create_wp_post(final_title, final_content, media_id, wp_url, wp_user, wp_password)
+                
+                if res.status_code == 201:
+                    status_box.update(label="✅ تم!", state="complete", expanded=False)
+                    st.success(f"تم! [رابط المقال]({res.json()['link']})")
+                else:
+                    st.error(f"خطأ: {res.text}")
+
+        except Exception as e:
+            st.error(f"Error: {e}")
