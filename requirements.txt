@@ -2,3 +2,6 @@ streamlit
 requests
 newspaper3k
 lxml_html_clean
+google-generativeai
+Pillow
+numpy
