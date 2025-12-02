@@ -16,7 +16,7 @@ except ImportError as e:
     st.stop()
 
 # --- 1. إعدادات الصفحة ---
-st.set_page_config(page_title="Editor Pro 9.0 (Multi-Paragraphs)", layout="wide", page_icon="📝")
+st.set_page_config(page_title="Editor Pro 9.1", layout="wide", page_icon="📝")
 
 # --- 2. القائمة الجانبية ---
 with st.sidebar:
@@ -78,4 +78,58 @@ def process_img_pro(source, is_url, do_crop, crop_amount, do_mirror, red_val):
         else:
             img = Image.open(source)
             
+        # هنا كان الخطأ، قمنا بإصلاح المسافات
         if img.mode != 'RGB':
+            img = img.convert('RGB')
+        
+        # 1. قص اللوغو
+        if do_crop:
+            w, h = img.size
+            new_h = int(h * (1 - crop_amount))
+            img = img.crop((0, 0, w, new_h))
+            
+        # 2. القلب
+        if do_mirror:
+            img = ImageOps.mirror(img)
+        
+        # 3. الأبعاد (768x432)
+        img = resize_fixed_768(img)
+        
+        # 4. الألوان
+        img = ImageEnhance.Color(img).enhance(1.6)
+        img = ImageEnhance.Contrast(img).enhance(1.15)
+        img = ImageEnhance.Sharpness(img).enhance(1.3)
+        
+        # 5. الطبقة الحمراء
+        if red_val > 0:
+            overlay = Image.new('RGB', img.size, (180, 20, 20))
+            img = Image.blend(img, overlay, alpha=red_val)
+        
+        buf = io.BytesIO()
+        img.save(buf, format='JPEG', quality=95)
+        return buf.getvalue()
+    except Exception as e:
+        st.error(f"خطأ في الصورة: {e}")
+        return None
+
+def ai_rewrite_pro(txt, key, lang):
+    try:
+        genai.configure(api_key=key)
+        model = genai.GenerativeModel('gemini-2.0-flash')
+        
+        # برومبت الفقرات المتعددة
+        prompt = f"""
+        **الدور:**
+        أنت رئيس تحرير صحيفة محترف.
+        **المهمة:**
+        أعد صياغة وترجمة النص التالي إلى: {lang}.
+
+        **التعليمات:**
+        1. **الفاصل:** استخدم ###SPLIT### بين العنوان والمقال.
+        2. **التقسيم (مهم):** قسم المقال إلى **4 فقرات على الأقل** و **10 كحد أقصى**. كل فقرة يجب أن تكون واضحة ومنفصلة.
+        3. **الأسلوب:** دسم، غني بالمعلومات، ومترابط.
+
+        **النص:**
+        {txt[:12000]}
+        """
+        resp = model
